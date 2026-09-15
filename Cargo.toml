@@ -1,0 +1,14 @@
+[package]
+name = "open-kanojyo"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+crossterm = "0.28"
+dotenvy = "0.15"
+ratatui = "0.29"
+rig-agent = { version = "0.42", default-features = false }
+rig-core = { version = "0.42", default-features = false, features = ["rustls"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
+unicode-width = "0.2"
