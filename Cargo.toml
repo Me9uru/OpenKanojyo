@@ -7,8 +7,13 @@ edition = "2024"
 anyhow = "1"
 crossterm = "0.28"
 dotenvy = "0.15"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 ratatui = "0.29"
 rig-agent = { version = "0.42", default-features = false }
 rig-core = { version = "0.42", default-features = false, features = ["rustls"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["io-util", "macros", "process", "rt-multi-thread", "sync", "time"] }
 unicode-width = "0.2"

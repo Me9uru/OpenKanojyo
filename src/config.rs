@@ -1,44 +1,49 @@
 use std::env;
 
-use anyhow::{Context, Result, bail};
+use anyhow::Result;
 
 pub struct Config {
     pub api_key: String,
     pub base_url: String,
     pub model: String,
-    pub preamble: String,
     pub temperature: f64,
+    pub max_tokens: u64,
+    pub enable_thinking: Option<bool>,
+    pub enable_skills: bool,
+    pub enable_tools: bool,
 }
 
 impl Config {
     pub fn load() -> Result<Self> {
-        dotenvy::dotenv().context("无法读取 .env，请先复制 .env.example 并填写配置")?;
+        let _ = dotenvy::dotenv();
 
         let temperature = env::var("AGENT_TEMPERATURE")
             .unwrap_or_else(|_| "0.7".to_owned())
-            .parse()
-            .context("AGENT_TEMPERATURE 必须是数字")?;
-        if !(0.0..=2.0).contains(&temperature) {
-            bail!("AGENT_TEMPERATURE 必须在 0 到 2 之间");
-        }
+            .parse::<f64>()?;
+        let max_tokens = env::var("AGENT_MAX_TOKENS")
+            .unwrap_or_else(|_| "1024".to_owned())
+            .parse::<u64>()?;
+        let enable_thinking = env::var("AGENT_ENABLE_THINKING")
+            .ok()
+            .map(|value| value.parse::<bool>())
+            .transpose()?;
+        let enable_skills = env::var("AGENT_ENABLE_SKILLS")
+            .unwrap_or_else(|_| "false".to_owned())
+            .parse::<bool>()?;
+        let enable_tools = env::var("AGENT_ENABLE_TOOLS")
+            .unwrap_or_else(|_| "false".to_owned())
+            .parse::<bool>()?;
 
         Ok(Self {
-            api_key: required("OPENAI_API_KEY")?,
+            api_key: env::var("OPENAI_API_KEY")?,
             base_url: env::var("OPENAI_BASE_URL")
                 .unwrap_or_else(|_| "https://api.openai.com/v1".to_owned()),
-            model: required("OPENAI_MODEL")?,
-            preamble: env::var("AGENT_PREAMBLE").unwrap_or_else(|_| {
-                "你是 OpenKanojyo，一个友善、准确、简洁的中文 AI 助手。".to_owned()
-            }),
+            model: env::var("OPENAI_MODEL")?,
             temperature,
+            max_tokens,
+            enable_thinking,
+            enable_skills,
+            enable_tools,
         })
     }
-}
-
-fn required(name: &str) -> Result<String> {
-    let value = env::var(name).with_context(|| format!(".env 中缺少 {name}"))?;
-    if value.trim().is_empty() {
-        bail!(".env 中的 {name} 不能为空");
-    }
-    Ok(value)
 }

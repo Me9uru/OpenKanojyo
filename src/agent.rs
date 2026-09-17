@@ -1,65 +1,94 @@
-use anyhow::{Context, Result};
-use rig_agent::{Agent as RigAgent, completion::Chat};
-use rig_core::completion::Message as RigMessage;
+use anyhow::Result;
+use rig_agent::{
+    Agent, AgentBuilder,
+    tool::{Tool, server::ToolServer},
+};
+use rig_core::{client::CompletionClient, providers::openai};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Message {
-    pub role: Role,
-    pub content: String,
+use crate::{
+    capability::CapabilitySummary,
+    config::Config,
+    context::assembly::PromptContext,
+    skills::{conversation::ConversationSkill, registry::SkillRegistry},
+    tools::{load_skill::LoadSkillTool, shell::ShellTool},
+};
+
+pub struct AssembledAgent {
+    pub agent: Agent,
+    pub provider_label: String,
+    pub skill_summaries: Vec<CapabilitySummary>,
+    pub tool_summaries: Vec<CapabilitySummary>,
 }
 
-impl Message {
-    pub fn new(role: Role, content: impl Into<String>) -> Self {
-        Self {
-            role,
-            content: content.into(),
-        }
+/// 根据启动配置装配模型、Prompt、Skill 和 Tool。
+pub fn assemble_agent(config: Config) -> Result<AssembledAgent> {
+    let Config {
+        api_key,
+        base_url,
+        model,
+        temperature,
+        max_tokens,
+        enable_thinking,
+        enable_skills,
+        enable_tools,
+    } = config;
+
+    let provider_label = format!("{model} @ {base_url}");
+    let client = openai::CompletionsClient::builder()
+        .api_key(api_key)
+        .base_url(base_url)
+        .build()?;
+    let model = client.completion_model(model);
+
+    let skills = if enable_skills {
+        SkillRegistry::new().with_skill(ConversationSkill)
+    } else {
+        SkillRegistry::new()
+    };
+    let context = PromptContext::standard().with_skills(&skills);
+    let skill_summaries = context.skill_summaries();
+    let preamble = context.render_preamble();
+
+    let mut builder = AgentBuilder::new(model)
+        .name("open_kanojyo")
+        .description("OpenKanojyo TUI 对话助手")
+        .default_max_turns(4)
+        .preamble(&preamble)
+        .temperature(temperature)
+        .max_tokens(max_tokens);
+    if let Some(enable_thinking) = enable_thinking {
+        builder = builder.additional_params(serde_json::json!({
+            "chat_template_kwargs": {"enable_thinking": enable_thinking}
+        }));
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Role {
-    User,
-    Assistant,
-}
-
-pub struct Agent {
-    inner: RigAgent,
-    history: Vec<RigMessage>,
-}
-
-impl Agent {
-    pub fn new(inner: RigAgent) -> Self {
-        Self {
-            inner,
-            history: Vec::new(),
-        }
+    for document in context.render_documents() {
+        builder = builder.context(&document);
     }
 
-    pub async fn reply(&mut self, input: impl Into<String>) -> Result<Message> {
-        let content = self
-            .inner
-            .chat(input.into(), &mut self.history)
-            .await
-            .context("Rig Agent 对话失败")?;
-        Ok(Message::new(Role::Assistant, content))
+    let mut tool_server = ToolServer::new();
+    let mut tool_summaries = Vec::new();
+    if !skills.is_empty() {
+        let loader = LoadSkillTool::new(skills);
+        tool_summaries.push(tool_summary(&loader));
+        tool_server = tool_server.tool(loader);
+    }
+    if enable_tools {
+        let shell = ShellTool::default();
+        tool_summaries.push(tool_summary(&shell));
+        tool_server = tool_server.tool(shell);
     }
 
-    pub fn clear(&mut self) {
-        self.history.clear();
-    }
+    Ok(AssembledAgent {
+        agent: builder.tool_server_handle(tool_server.run()).build(),
+        provider_label,
+        skill_summaries,
+        tool_summaries,
+    })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn ui_message_accepts_owned_and_borrowed_text() {
-        assert_eq!(Message::new(Role::User, "hello").content, "hello");
-        assert_eq!(
-            Message::new(Role::Assistant, String::from("hi")).content,
-            "hi"
-        );
+fn tool_summary<T: Tool>(tool: &T) -> CapabilitySummary {
+    CapabilitySummary {
+        name: T::NAME.to_owned(),
+        description: tool.description(),
     }
 }
